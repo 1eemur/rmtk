@@ -45,11 +45,42 @@ func listFiles(path string) ([]string, error) {
 	}
 
 	var files []string
+
+	// Add ".." if not at root
+	parent := filepath.Dir(path)
+	if parent != path {
+		files = append(files, "..")
+	}
+
 	for _, entry := range entries {
 		files = append(files, entry.Name())
 	}
 
 	return files, nil
+}
+
+func (fl *FileList) pageDown() {
+	half := fl.maxVisible / 2
+	if fl.currentIdx+half >= len(fl.files) {
+		fl.currentIdx = len(fl.files) - 1
+	} else {
+		fl.currentIdx += half
+	}
+	if fl.currentIdx >= fl.offset+fl.maxVisible {
+		fl.offset = fl.currentIdx - fl.maxVisible + 1
+	}
+}
+
+func (fl *FileList) pageUp() {
+	half := fl.maxVisible / 2
+	if fl.currentIdx-half < 0 {
+		fl.currentIdx = 0
+	} else {
+		fl.currentIdx -= half
+	}
+	if fl.currentIdx < fl.offset {
+		fl.offset = fl.currentIdx
+	}
 }
 
 func (fl *FileList) moveUp() {
@@ -79,12 +110,11 @@ func (fl *FileList) currentFile() string {
 
 func (fl *FileList) render() {
 	termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
-
 	w, h := termbox.Size()
 	fl.maxVisible = h - 3 // Reserve space for header and footer
 
 	// Draw header
-	header := fmt.Sprintf(" File Navigator - %s ", fl.currentPath)
+	header := fmt.Sprintf(" RMTK - %s ", fl.currentPath)
 	drawText(0, 0, header, termbox.ColorBlack, termbox.ColorWhite)
 	drawLine(1, w, termbox.ColorWhite)
 
@@ -122,7 +152,7 @@ func (fl *FileList) render() {
 
 	// Draw footer
 	footerY := h - 1
-	footer := " ↑/k: Up | ↓/j: Down | Enter: Open with Zathura | q: Quit "
+	footer := " ↑/k: Up | ↓/j: Down | Enter: Open | Ctrl+U/D: Half Page | q: Quit "
 	drawText(0, footerY, footer, termbox.ColorBlack, termbox.ColorWhite)
 
 	termbox.Flush()
@@ -177,10 +207,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Set terminal mode for input handling
+	// Set terminal mode for input handling and complete first render
 	termbox.SetInputMode(termbox.InputEsc)
-
-	// First render
 	fileList.render()
 
 mainloop:
@@ -194,25 +222,31 @@ mainloop:
 				fileList.moveUp()
 			case termbox.KeyArrowDown:
 				fileList.moveDown()
+			case termbox.KeyCtrlD:
+				fileList.pageDown()
+			case termbox.KeyCtrlU:
+				fileList.pageUp()
 			case termbox.KeyEnter:
 				if len(fileList.files) > 0 {
-					selectedFile := filepath.Join(fileList.currentPath, fileList.currentFile())
+					selected := fileList.currentFile()
+					var newPath string
 
-					// Check if file is a directory
-					fileInfo, err := os.Stat(selectedFile)
+					if selected == ".." {
+						newPath = filepath.Dir(fileList.currentPath)
+					} else {
+						newPath = filepath.Join(fileList.currentPath, selected)
+					}
+
+					fileInfo, err := os.Stat(newPath)
 					if err == nil && fileInfo.IsDir() {
-						// Navigate into directory
-						fileList, err = newFileList(selectedFile)
+						fileList, err = newFileList(newPath)
 						if err != nil {
-							// Show error briefly
 							termbox.Close()
 							fmt.Fprintf(os.Stderr, "Error opening directory: %v\n", err)
 							return
 						}
 					} else {
-						// Only try to open files that might be compatible with Zathura
-						// Common document formats that Zathura can open
-						ext := strings.ToLower(filepath.Ext(selectedFile))
+						ext := strings.ToLower(filepath.Ext(newPath))
 						zathuraFormats := []string{".pdf", ".djvu", ".ps", ".epub", ".cb", ".cbz", ".cbr"}
 
 						canOpen := false
@@ -225,7 +259,7 @@ mainloop:
 
 						if canOpen {
 							termbox.Close()
-							err = openWithZathura(selectedFile)
+							err = openWithZathura(newPath)
 							if err != nil {
 								fmt.Fprintf(os.Stderr, "Error opening file with Zathura: %v\n", err)
 							}
