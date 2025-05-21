@@ -11,11 +11,15 @@ import (
 )
 
 type FileList struct {
-	files       []string
-	currentIdx  int
-	offset      int
-	maxVisible  int
-	currentPath string
+	files         []string
+	currentIdx    int
+	offset        int
+	maxVisible    int
+	currentPath   string
+	searchMode    bool
+	searchQuery   string
+	filteredFiles []string
+	originalFiles []string
 }
 
 func newFileList(path string) (*FileList, error) {
@@ -30,11 +34,15 @@ func newFileList(path string) (*FileList, error) {
 	}
 
 	return &FileList{
-		files:       files,
-		currentIdx:  0,
-		offset:      0,
-		maxVisible:  0,
-		currentPath: absPath,
+		files:         files,
+		originalFiles: files,
+		filteredFiles: []string{},
+		currentIdx:    0,
+		offset:        0,
+		maxVisible:    0,
+		currentPath:   absPath,
+		searchMode:    false,
+		searchQuery:   "",
 	}, nil
 }
 
@@ -59,18 +67,6 @@ func listFiles(path string) ([]string, error) {
 	return files, nil
 }
 
-func (fl *FileList) pageDown() {
-	half := fl.maxVisible / 2
-	if fl.currentIdx+half >= len(fl.files) {
-		fl.currentIdx = len(fl.files) - 1
-	} else {
-		fl.currentIdx += half
-	}
-	if fl.currentIdx >= fl.offset+fl.maxVisible {
-		fl.offset = fl.currentIdx - fl.maxVisible + 1
-	}
-}
-
 func (fl *FileList) pageUp() {
 	half := fl.maxVisible / 2
 	if fl.currentIdx-half < 0 {
@@ -80,6 +76,18 @@ func (fl *FileList) pageUp() {
 	}
 	if fl.currentIdx < fl.offset {
 		fl.offset = fl.currentIdx
+	}
+}
+
+func (fl *FileList) pageDown() {
+	half := fl.maxVisible / 2
+	if fl.currentIdx+half >= len(fl.files) {
+		fl.currentIdx = len(fl.files) - 1
+	} else {
+		fl.currentIdx += half
+	}
+	if fl.currentIdx >= fl.offset+fl.maxVisible {
+		fl.offset = fl.currentIdx - fl.maxVisible + 1
 	}
 }
 
@@ -101,11 +109,76 @@ func (fl *FileList) moveDown() {
 	}
 }
 
+func (fl *FileList) goToTop() {
+	fl.currentIdx = 0
+	fl.offset = 0
+}
+
+func (fl *FileList) goToBottom() {
+	fl.currentIdx = len(fl.files) - 1
+	if fl.currentIdx >= fl.maxVisible {
+		fl.offset = fl.currentIdx - fl.maxVisible + 1
+	} else {
+		fl.offset = 0
+	}
+}
+
 func (fl *FileList) currentFile() string {
 	if len(fl.files) == 0 {
 		return ""
 	}
 	return fl.files[fl.currentIdx]
+}
+
+func (fl *FileList) enterSearchMode() {
+	fl.searchMode = true
+	fl.searchQuery = ""
+	// Store the original list before filtering
+	fl.originalFiles = fl.files
+	fl.filteredFiles = fl.files
+}
+
+func (fl *FileList) exitSearchMode() {
+	fl.searchMode = false
+	fl.searchQuery = ""
+	fl.files = fl.originalFiles
+	fl.currentIdx = 0
+	fl.offset = 0
+}
+
+func (fl *FileList) updateSearch(r rune) {
+	if r == 8 { // Backspace
+		if len(fl.searchQuery) > 0 {
+			fl.searchQuery = fl.searchQuery[:len(fl.searchQuery)-1]
+		}
+	} else {
+		fl.searchQuery += string(r)
+	}
+
+	// Filter files based on the query
+	fl.filterFiles()
+
+	// Reset cursor position
+	fl.currentIdx = 0
+	fl.offset = 0
+}
+
+func (fl *FileList) filterFiles() {
+	if fl.searchQuery == "" {
+		fl.files = fl.originalFiles
+		return
+	}
+
+	fl.filteredFiles = []string{}
+	query := strings.ToLower(fl.searchQuery)
+
+	for _, file := range fl.originalFiles {
+		if strings.Contains(strings.ToLower(file), query) {
+			fl.filteredFiles = append(fl.filteredFiles, file)
+		}
+	}
+
+	fl.files = fl.filteredFiles
 }
 
 func (fl *FileList) render() {
@@ -115,6 +188,9 @@ func (fl *FileList) render() {
 
 	// Draw header
 	header := fmt.Sprintf(" RMTK - %s ", fl.currentPath)
+	if fl.searchMode {
+		header = fmt.Sprintf(" RMTK - %s [Search: %s] ", fl.currentPath, fl.searchQuery)
+	}
 	drawText(0, 0, header, termbox.ColorBlack, termbox.ColorWhite)
 	drawLine(1, w, termbox.ColorWhite)
 
@@ -125,7 +201,11 @@ func (fl *FileList) render() {
 	}
 
 	if len(fl.files) == 0 {
-		drawText(2, 3, "No files in this directory", termbox.ColorRed, termbox.ColorDefault)
+		if fl.searchMode && fl.searchQuery != "" {
+			drawText(2, 3, "No matching files", termbox.ColorRed, termbox.ColorDefault)
+		} else {
+			drawText(2, 3, "No files in this directory", termbox.ColorRed, termbox.ColorDefault)
+		}
 	} else {
 		for i := fl.offset; i < visibleEnd; i++ {
 			y := i - fl.offset + 2
@@ -152,7 +232,7 @@ func (fl *FileList) render() {
 
 	// Draw footer
 	footerY := h - 1
-	footer := " ↑/k: Up | ↓/j: Down | Enter: Open | Ctrl+U/D: Half Page | q: Quit "
+	footer := " ↑/k: Up | ↓/j: Down | gg: Top | G: Bottom | Ctrl+U/D: Half Page | /: Search | Esc: Exit Search | q: Quit "
 	drawText(0, footerY, footer, termbox.ColorBlack, termbox.ColorWhite)
 
 	termbox.Flush()
@@ -185,6 +265,7 @@ func openWithZathura(filePath string) error {
 }
 
 func main() {
+	var gPressed bool
 	// Get directory path from args or use current directory
 	path := "."
 	if len(os.Args) > 1 {
@@ -215,67 +296,103 @@ mainloop:
 	for {
 		switch ev := termbox.PollEvent(); ev.Type {
 		case termbox.EventKey:
-			switch ev.Key {
-			case termbox.KeyEsc, termbox.KeyCtrlC:
-				break mainloop
-			case termbox.KeyArrowUp:
-				fileList.moveUp()
-			case termbox.KeyArrowDown:
-				fileList.moveDown()
-			case termbox.KeyCtrlD:
-				fileList.pageDown()
-			case termbox.KeyCtrlU:
-				fileList.pageUp()
-			case termbox.KeyEnter:
-				if len(fileList.files) > 0 {
-					selected := fileList.currentFile()
-					var newPath string
-
-					if selected == ".." {
-						newPath = filepath.Dir(fileList.currentPath)
+			if fileList.searchMode {
+				switch ev.Key {
+				case termbox.KeyEsc:
+					fileList.exitSearchMode()
+				case termbox.KeyEnter:
+					// Accept search results and exit search mode
+					fileList.searchMode = false
+				case termbox.KeyBackspace, termbox.KeyBackspace2:
+					if len(fileList.searchQuery) > 0 {
+						fileList.searchQuery = fileList.searchQuery[:len(fileList.searchQuery)-1]
+						fileList.filterFiles()
 					} else {
-						newPath = filepath.Join(fileList.currentPath, selected)
+						fileList.exitSearchMode()
 					}
-
-					fileInfo, err := os.Stat(newPath)
-					if err == nil && fileInfo.IsDir() {
-						fileList, err = newFileList(newPath)
-						if err != nil {
-							termbox.Close()
-							fmt.Fprintf(os.Stderr, "Error opening directory: %v\n", err)
-							return
-						}
-					} else {
-						ext := strings.ToLower(filepath.Ext(newPath))
-						zathuraFormats := []string{".pdf", ".djvu", ".ps", ".epub", ".cb", ".cbz", ".cbr"}
-
-						canOpen := false
-						for _, format := range zathuraFormats {
-							if ext == format {
-								canOpen = true
-								break
-							}
-						}
-
-						if canOpen {
-							termbox.Close()
-							err = openWithZathura(newPath)
-							if err != nil {
-								fmt.Fprintf(os.Stderr, "Error opening file with Zathura: %v\n", err)
-							}
-							return
-						}
+				default:
+					if ev.Ch != 0 {
+						fileList.updateSearch(ev.Ch)
 					}
 				}
-			default:
-				// Handle char keys for vim-style navigation
-				switch ev.Ch {
-				case 'q':
+			} else {
+				switch ev.Key {
+				case termbox.KeyEsc, termbox.KeyCtrlC:
 					break mainloop
-				case 'k':
+				case termbox.KeyArrowUp:
 					fileList.moveUp()
-				case 'j':
+				case termbox.KeyArrowDown:
 					fileList.moveDown()
+				case termbox.KeyCtrlD:
+					fileList.pageDown()
+				case termbox.KeyCtrlU:
+					fileList.pageUp()
+				case termbox.KeyEnter:
+					if len(fileList.files) > 0 {
+						selected := fileList.currentFile()
+						var newPath string
+
+						if selected == ".." {
+							newPath = filepath.Dir(fileList.currentPath)
+						} else {
+							newPath = filepath.Join(fileList.currentPath, selected)
+						}
+
+						fileInfo, err := os.Stat(newPath)
+						if err == nil && fileInfo.IsDir() {
+							fileList, err = newFileList(newPath)
+							if err != nil {
+								termbox.Close()
+								fmt.Fprintf(os.Stderr, "Error opening directory: %v\n", err)
+								return
+							}
+						} else {
+							ext := strings.ToLower(filepath.Ext(newPath))
+							zathuraFormats := []string{".pdf", ".djvu", ".ps", ".epub", ".cb", ".cbz", ".cbr"}
+
+							canOpen := false
+							for _, format := range zathuraFormats {
+								if ext == format {
+									canOpen = true
+									break
+								}
+							}
+
+							if canOpen {
+								termbox.Close()
+								err = openWithZathura(newPath)
+								if err != nil {
+									fmt.Fprintf(os.Stderr, "Error opening file with Zathura: %v\n", err)
+								}
+								return
+							}
+						}
+					}
+				default:
+					switch ev.Ch {
+					case 'q':
+						break mainloop
+					case 'k':
+						fileList.moveUp()
+						gPressed = false
+					case 'j':
+						fileList.moveDown()
+						gPressed = false
+					case 'g':
+						if gPressed {
+							fileList.goToTop()
+							gPressed = false
+						} else {
+							gPressed = true
+						}
+					case 'G':
+						fileList.goToBottom()
+						gPressed = false
+					case '/':
+						fileList.enterSearchMode()
+					default:
+						gPressed = false
+					}
 				}
 			}
 		case termbox.EventResize:
