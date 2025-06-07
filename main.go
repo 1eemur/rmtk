@@ -264,12 +264,62 @@ func openWithZathura(filePath string) error {
 	}
 }
 
+// getConfigPath returns the path from the config file or empty string if not valid
+func getConfigPath() string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	configPath := filepath.Join(homeDir, ".config", "rmtk", "conf")
+
+	// Check if config file exists
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		return ""
+	}
+
+	// Read the config file
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		return ""
+	}
+
+	// Trim whitespace and check if it's not empty
+	path := strings.TrimSpace(string(content))
+	if path == "" {
+		return ""
+	}
+
+	// Expand ~ to home directory if present
+	if strings.HasPrefix(path, "~/") {
+		path = filepath.Join(homeDir, path[2:])
+	}
+
+	// Check if the path exists and is a directory
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		return path
+	}
+
+	return ""
+}
+
 func main() {
 	var gPressed bool
-	// Get directory path from args or use current directory
-	path := "."
+	// Get directory path from args, config file, or use current directory
+	var path string
+
 	if len(os.Args) > 1 {
+		// Use CLI argument if provided
 		path = os.Args[1]
+	} else {
+		// Try to get path from config file
+		configPath := getConfigPath()
+		if configPath != "" {
+			path = configPath
+		} else {
+			// Fall back to current directory
+			path = "."
+		}
 	}
 
 	// Initialize terminal UI
