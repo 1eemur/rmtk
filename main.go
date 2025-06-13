@@ -8,7 +8,12 @@ import (
 	"strings"
 
 	"github.com/nsf/termbox-go"
+	"gopkg.in/yaml.v2"
 )
+
+type Config struct {
+	DefaultPath string `yaml:"defaultPath"`
+}
 
 type FileList struct {
 	files         []string
@@ -264,29 +269,51 @@ func openWithZathura(filePath string) error {
 	}
 }
 
-// getConfigPath returns the path from the config file or empty string if not valid
-func getConfigPath() string {
+// loadConfig loads the configuration from the YAML config file
+func loadConfig() (*Config, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return ""
+		return nil, err
 	}
 
-	configPath := filepath.Join(homeDir, ".config", "rmtk", "conf")
+	configPath := filepath.Join(homeDir, ".config", "rmtk", "conf.yml")
 
 	// Check if config file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		return ""
+		return nil, fmt.Errorf("config file not found")
 	}
 
 	// Read the config file
 	content, err := os.ReadFile(configPath)
 	if err != nil {
+		return nil, err
+	}
+
+	// Parse YAML
+	var config Config
+	err = yaml.Unmarshal(content, &config)
+	if err != nil {
+		return nil, err
+	}
+
+	return &config, nil
+}
+
+// getConfigPath returns the default path from the config file or empty string if not valid
+func getConfigPath() string {
+	config, err := loadConfig()
+	if err != nil {
 		return ""
 	}
 
-	// Trim whitespace and check if it's not empty
-	path := strings.TrimSpace(string(content))
+	path := strings.TrimSpace(config.DefaultPath)
 	if path == "" {
+		return ""
+	}
+
+	// Get home directory for tilde expansion
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
 		return ""
 	}
 

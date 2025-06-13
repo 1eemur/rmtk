@@ -78,10 +78,22 @@ RMTK can open the following file types with Zathura:
 
 ## Configuration
 
-Currently, RMTK doesn't use a configuration file. All preferences must be set by modifying the source code.
+RMTK uses a YAML configuration file located at ~/.config/rmtk/conf.yml
 
-## Future Plans
+Creating the config directory
+```
+mkdir -p ~/.config/rmtk
+```
 
-- Add custom configuration file support
+## Sample conf.yml file:
+```
+# RMTK config
+defaultPath: /home/username/Books
+```
+
+## To Do
+- Refactor and restructure current code
 - Add bookmarks for frequently used directories
-- Add functionality to sort directories
+- Hotkey to update home directory in config
+- Add functionality to toggle the bottom menu bar
+- Add additional configuration options to config file
