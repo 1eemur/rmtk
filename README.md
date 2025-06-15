@@ -1,6 +1,8 @@
 # rmtk - A lightweight CLI e-book browser
 
-Raamatukogu: A simple and minimalistic terminal-based e-book browser. Written in Go and using Zathura to display the ebooks.
+Raamatukogu: A simple and minimalistic terminal-based e-book browser. 
+
+Written in Go and using Zathura to display the ebooks.
 
 ## Features
 
